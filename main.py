@@ -3,13 +3,13 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from agent import rispondi
-
+import uuid
 
 def main():
     load_dotenv()                       # read ANTHROPIC_API_KEY from .env if present
     client = Anthropic()
     messages = []                       # conversation memory: persists across turns
-
+    session_id = uuid.uuid4().hex[:8]  
     print("Agente ordini attivo. Scrivi un messaggio (o 'esci').\n")
     while True:
         testo = input("Tu:  ").strip()
@@ -17,7 +17,7 @@ def main():
             print("Ciao!")
             break
         messages.append({"role": "user", "content": testo})
-        risposta = rispondi(messages, client)
+        risposta = rispondi(messages, client,session_id=session_id)
         print("Bot:", risposta, "\n")
 
 

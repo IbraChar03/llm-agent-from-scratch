@@ -7,6 +7,8 @@ The conversation history (`messages`) is the agent's short-term memory.
 """
 import json
 import time
+import uuid
+from observability import log_event
 
 from anthropic import (
     Anthropic,
@@ -44,17 +46,48 @@ def call_with_retry(client: Anthropic, messages: list, max_tokens: int, max_retr
     raise RuntimeError(f"LLM unreachable after {max_retries} attempts")
 
 
-def rispondi(messages: list, client: Anthropic, max_tokens: int = 300) -> str:
+def rispondi(messages: list, client: Anthropic, max_tokens: int = 300, session_id: str = "") -> str:
     """Run the agent loop for the current conversation and return the final text.
 
     `messages` is mutated in place: the conversation history grows as the loop runs.
     """
+    trace_id = uuid.uuid4().hex[:8]
+    log_event(trace_id, "request_start",session_id=session_id)
+
+    t_start = time.time()
+    token_totali = 0
+    costo_totale = 0.0
+    giri = 0
+    tool_totali = 0
+
     while True:
+        t0 = time.time()
         response = call_with_retry(client, messages, max_tokens)
+        durata_ms = round((time.time() - t0) * 1000)
+
+        u = response.usage
+        costo_eur = round(((u.input_tokens / 1_000_000) * 1.00
+                             + (u.output_tokens / 1_000_000) * 5.00) * 0.92,6)
+        log_event(trace_id, "llm_call", session_id=session_id,
+                    durata_ms=durata_ms,
+                    token_in=u.input_tokens,
+                    token_out=u.output_tokens,
+                    costo_eur=costo_eur)
+
+        giri += 1
+        token_totali += u.input_tokens + u.output_tokens
+        costo_totale += costo_eur
+
         messages.append({"role": "assistant", "content": response.content})
 
         # No tool requested -> the LLM is done. Return its final text.
         if response.stop_reason != "tool_use":
+            log_event(trace_id, "request_end", session_id=session_id,
+                      giri=giri,
+                      tool_totali=tool_totali,
+                      token_totali=token_totali,
+                      costo_totale_eur=round(costo_totale, 6),
+                      durata_totale_ms=round((time.time() - t_start) * 1000))
             return "".join(b.text for b in response.content if b.type == "text")
 
         # The LLM can request several tools in one response (parallel tool use):
@@ -63,7 +96,14 @@ def rispondi(messages: list, client: Anthropic, max_tokens: int = 300) -> str:
         for block in response.content:
             if block.type != "tool_use":
                 continue
+            t0 = time.time()
             result = execute_tool(block.name, block.input)
+            durata_ms = round((time.time() - t0) * 1000)
+            log_event(trace_id, "tool_call", session_id=session_id,
+                        tool=block.name, durata_ms=durata_ms,
+                        esito="errore" if "errore" in result else "ok")
+            
+            tool_totali += 1
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
