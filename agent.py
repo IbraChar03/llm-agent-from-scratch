@@ -18,6 +18,7 @@ from anthropic import (
 )
 
 from tools import TOOLS, execute_tool
+from guardrails import requires_approval, approva_da_cli
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -46,11 +47,17 @@ def call_with_retry(client: Anthropic, messages: list, max_tokens: int, max_retr
     raise RuntimeError(f"LLM unreachable after {max_retries} attempts")
 
 
-def rispondi(messages: list, client: Anthropic, max_tokens: int = 300, session_id: str = "") -> str:
+def rispondi(messages: list, client: Anthropic, max_tokens: int = 300,
+             session_id: str = "", approve_fn=None) -> str:
     """Run the agent loop for the current conversation and return the final text.
 
     `messages` is mutated in place: the conversation history grows as the loop runs.
+    `approve_fn(tool_name, tool_input) -> bool` decides whether a side-effect tool may
+    run; defaults to a CLI y/N prompt. Tests can inject an auto-approve/deny function.
     """
+    if approve_fn is None:
+        approve_fn = approva_da_cli
+
     trace_id = uuid.uuid4().hex[:8]
     log_event(trace_id, "request_start",session_id=session_id)
 
@@ -96,6 +103,30 @@ def rispondi(messages: list, client: Anthropic, max_tokens: int = 300, session_i
         for block in response.content:
             if block.type != "tool_use":
                 continue
+
+            # --- Guardrail W17: human approval gate on side-effect tools ---
+            # The risk policy lives in code (guardrails.py), not in the prompt, so a
+            # prompt injection cannot talk its way past it.
+            if requires_approval(block.name):
+                log_event(trace_id, "approval_requested", session_id=session_id,
+                          tool=block.name, reason="tool_has_side_effect")
+                approvato = approve_fn(block.name, block.input)
+                log_event(trace_id, "approval_result", session_id=session_id,
+                          tool=block.name, approved=approvato)
+                if not approvato:
+                    log_event(trace_id, "tool_blocked", session_id=session_id,
+                              tool=block.name, reason="approval_denied")
+                    # The API requires a tool_result for EVERY tool_use, even when we
+                    # refuse to run it -> return an error result instead of executing.
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps({"errore": "azione non autorizzata dall'utente"}),
+                        "is_error": True,
+                    })
+                    continue
+            # --- end guardrail ---
+
             t0 = time.time()
             result = execute_tool(block.name, block.input)
             durata_ms = round((time.time() - t0) * 1000)

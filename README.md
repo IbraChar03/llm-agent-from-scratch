@@ -22,14 +22,20 @@ matter in production:
   exponential backoff; client errors (4xx) fail fast.
 - **Eval harness** — a golden dataset + a "contains" matcher scores the agent end-to-end
   and catches regressions.
+- **Observability** — every request gets a `trace_id` / `session_id`; each LLM and tool
+  call logs latency, tokens, cost and outcome as structured JSON, plus a per-request summary.
+- **Human approval gate** — side-effect tools (`apri_reclamo`) require human confirmation
+  before they run; the risk policy lives in code, so a prompt injection can't bypass it.
 
 ## Architecture
 
 ```
-main.py     CLI: multi-turn chat loop (conversation memory lives here)
-agent.py    the agent loop (rispondi) + LLM retry (call_with_retry)
-tools.py    tool functions, JSON schemas, idempotency, dispatch (execute_tool)
-eval.py     golden dataset + runner -> pass_rate
+main.py          CLI: multi-turn chat loop (conversation memory lives here)
+agent.py         the agent loop (rispondi) + LLM retry (call_with_retry)
+tools.py         tool functions, JSON schemas, idempotency, dispatch (execute_tool)
+observability.py structured per-request tracing (log_event)
+guardrails.py    tool risk policy + human approval gate (requires_approval)
+eval.py          golden dataset + runner -> pass_rate
 ```
 
 The loop, in one picture:
@@ -78,9 +84,9 @@ and error handling (unknown tool / missing argument become results, not crashes)
 
 - **Persistent idempotency store** (Redis / DB) instead of an in-memory dict — survives
   restarts and is shared across processes.
-- **Tracing & cost**: a `trace_id` per request, structured logs, token/cost tracking.
 - **A tool registry** instead of the `if/elif` dispatch, with Pydantic-generated schemas.
-- **A human approval gate** before any real side effect.
+- **An input injection screen** — an ML/LLM classifier (e.g. Llama Guard / Prompt Guard)
+  for jailbreak detection, layered on top of the deterministic approval gate.
 
 ## Stack
 
