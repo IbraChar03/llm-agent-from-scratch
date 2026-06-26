@@ -48,7 +48,7 @@ def call_with_retry(client: Anthropic, messages: list, max_tokens: int, max_retr
 
 
 def rispondi(messages: list, client: Anthropic, max_tokens: int = 300,
-             session_id: str = "", approve_fn=None) -> str:
+             session_id: str = "", approve_fn=None, trace_id: str = "") -> str:
     """Run the agent loop for the current conversation and return the final text.
 
     `messages` is mutated in place: the conversation history grows as the loop runs.
@@ -58,7 +58,8 @@ def rispondi(messages: list, client: Anthropic, max_tokens: int = 300,
     if approve_fn is None:
         approve_fn = approva_da_cli
 
-    trace_id = uuid.uuid4().hex[:8]
+    if not trace_id:
+        trace_id = uuid.uuid4().hex[:8]   # un id condiviso puo' arrivare da fuori (es. l'API)
     log_event(trace_id, "request_start",session_id=session_id)
 
     t_start = time.time()
