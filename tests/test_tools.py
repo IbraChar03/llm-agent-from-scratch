@@ -41,7 +41,6 @@ def test_missing_argument_is_caught():
 
 
 def test_apri_reclamo_is_idempotent(capsys):
-    tools.reclami_fatti.clear()
     args = {"order_id": "ORD-1", "motivo": "ritardo"}
 
     r1 = tools.execute_tool("apri_reclamo", args)
@@ -49,3 +48,11 @@ def test_apri_reclamo_is_idempotent(capsys):
 
     assert r1 == r2
     assert capsys.readouterr().out.count("SIDE EFFECT") == 1   # side effect fired exactly once
+
+
+def test_apri_reclamo_idempotent_ignores_free_text_motivo(capsys):
+    # Stesso ordine, motivo scritto DIVERSO -> resta UN solo reclamo: la key e'
+    # sull'identita' (order_id), non sul testo libero.
+    tools.execute_tool("apri_reclamo", {"order_id": "ORD-7", "motivo": "ritardo"})
+    tools.execute_tool("apri_reclamo", {"order_id": "ORD-7", "motivo": "il pacco non arriva!!"})
+    assert capsys.readouterr().out.count("SIDE EFFECT") == 1

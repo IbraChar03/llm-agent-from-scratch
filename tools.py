@@ -8,10 +8,10 @@ result the model can read (instead of crashing the loop).
 import json
 import hashlib
 
-# In-memory idempotency store: key -> result already produced.
-# In production this would be Redis or a DB table: it must survive restarts and
-# be shared across processes/servers, which an in-memory dict is not.
-reclami_fatti: dict[str, dict] = {}
+import storage
+
+# Idempotency store PERSISTENTE (SQLite, vedi storage.py): sopravvive ai riavvii.
+# La key e' calcolata sui campi di IDENTITA' stabili dell'operazione, non sul testo libero.
 
 # JSON-Schema descriptions handed to the LLM. The keys (name/description/
 # input_schema/type/properties/required) are fixed by the Anthropic API; the
@@ -79,11 +79,15 @@ def execute_tool(name: str, args: dict) -> dict:
             return controlla_ordine(args["order_id"])
 
         if name == "apri_reclamo":
-            key = make_idempotency_key(name, args)
-            if key in reclami_fatti:
-                return reclami_fatti[key]                       # already done -> cached result
+            # Key sui CAMPI DI IDENTITA' stabili (order_id), NON sul testo libero
+            # (motivo): due tentativi dello stesso reclamo scritti diversamente
+            # devono contare come UNO.
+            key = make_idempotency_key(name, {"order_id": args["order_id"]})
+            cached = storage.get_idempotent_result(key)
+            if cached is not None:
+                return cached                                   # gia' fatto -> result salvato
             result = apri_reclamo(args["order_id"], args["motivo"])
-            reclami_fatti[key] = result                         # remember it
+            storage.save_idempotent_result(key, result)         # ricorda (con TTL)
             return result
 
         return {"errore": f"tool sconosciuto: {name}"}

@@ -3,10 +3,12 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from agent import rispondi
+import storage
 import uuid
 
 def main():
     load_dotenv()                       # read ANTHROPIC_API_KEY from .env if present
+    storage.init_db()                   # assicura le tabelle (idempotency / conversazioni)
     client = Anthropic()
     messages = []                       # conversation memory: persists across turns
     session_id = uuid.uuid4().hex[:8]  
